@@ -1,168 +1,83 @@
-name: Build AdaptixC2  
-  
-on:  
-  push:  
-    branches: [ main, dev ]  
-  pull_request:  
-    branches: [ main, dev ]  
-  release:  
-    types: [ published ]  
-  
-jobs:  
-  build-server:  
-    runs-on: ubuntu-latest  
-    outputs:  
-      server-hash: ${{ steps.hash.outputs.hash }}  
+name: Build AdaptixC2 - Linux Server & Windows Client
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  # 构建 Linux 服务端
+  build-server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
       
-    steps:  
-    - name: Checkout code  
-      uses: actions/checkout@v4  
-        
-    - name: Setup Go  
-      uses: actions/setup-go@v4  
-      with:  
-        go-version: '1.24.4'  
-          
-    - name: Cache Go modules  
-      uses: actions/cache@v3  
-      with:  
-        path: |  
-          ~/.cache/go-build  
-          ~/go/pkg/mod  
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}  
-          
-    - name: Install dependencies  
-      run: |  
-        sudo apt update  
-        sudo apt install -y build-essential mingw-w64  
-          
-    - name: Build server  
-      run: make server  
-        
-    - name: Build extenders  
-      run: make extenders  
-        
-    - name: Generate hash  
-      id: hash  
-      run: echo "hash=$(sha256sum dist/adaptixserver | cut -d' ' -f1)" >> $GITHUB_OUTPUT  
-        
-    - name: Upload server artifacts  
-      uses: actions/upload-artifact@v4  
-      with:  
-        name: server-linux  
-        path: |  
-          dist/adaptixserver  
-          dist/profile.json  
-          dist/ssl_gen.sh  
-          dist/404page.html  
-          dist/extenders/  
-        retention-days: 30  
-  
-  build-client-windows:  
-    runs-on: windows-latest  
-    needs: build-server  
+      - name: Setup Go 1.24.4
+        run: |
+          wget https://go.dev/dl/go1.24.4.linux-amd64.tar.gz
+          sudo rm -rf /usr/local/go
+          sudo tar -C /usr/local -xzf go1.24.4.linux-amd64.tar.gz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
       
-    steps:  
-    - name: Checkout code  
-      uses: actions/checkout@v4  
-        
-    - name: Setup Qt  
-      uses: jurplel/install-qt-action@v3  
-      with:  
-        version: '6.6.0'  
-        host: 'windows'  
-        target: 'desktop'  
-        arch: 'win64_mingw'  
-          
-    - name: Setup CMake  
-      uses: jwlawson/actions-setup-cmake@v1.14  
-      with:  
-        cmake-version: '3.28.0'  
-          
-    - name: Setup MinGW  
-      uses: egor-tensin/setup-mingw@v2  
-      with:  
-        platform: x64  
-          
-    - name: Cache CMake build  
-      uses: actions/cache@v3  
-      with:  
-        path: AdaptixClient/build  
-        key: ${{ runner.os }}-cmake-${{ hashFiles('AdaptixClient/CMakeLists.txt', 'AdaptixClient/**/CMakeLists.txt') }}  
-          
-    - name: Build client  
-      run: |  
-        cd AdaptixClient  
-        cmake . -G "MinGW Makefiles"  
-        mingw32-make  
-          
-    - name: Upload client artifacts  
-      uses: actions/upload-artifact@v4  
-      with:  
-        name: client-windows  
-        path: AdaptixClient/AdaptixClient.exe  
-        retention-days: 30  
-  
-  build-client-linux:  
-    runs-on: ubuntu-latest  
-    needs: build-server  
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y mingw-w64 make gcc g++
       
-    steps:  
-    - name: Checkout code  
-      uses: actions/checkout@v4  
-        
-    - name: Setup Qt  
-      uses: jurplel/install-qt-action@v3  
-      with:  
-        version: '6.6.0'  
-        host: 'linux'  
-        target: 'desktop'  
-        arch: 'gcc_64'  
-          
-    - name: Setup CMake  
-      uses: jwlawson/actions-setup-cmake@v1.14  
-      with:  
-        cmake-version: '3.28.0'  
-          
-    - name: Install dependencies  
-      run: |  
-        sudo apt update  
-        sudo apt install -y build-essential libssl-dev  
-          
-    - name: Build client  
-      run: |  
-        cd AdaptixClient  
-        cmake .  
-        make -j$(nproc)  
-          
-    - name: Upload client artifacts  
-      uses: actions/upload-artifact@v4  
-      with:  
-        name: client-linux  
-        path: AdaptixClient/AdaptixClient  
-        retention-days: 30  
-  
-  release:  
-    if: github.event_name == 'release'  
-    runs-on: ubuntu-latest  
-    needs: [build-server, build-client-windows, build-client-linux]  
+      - name: Build Server
+        run: |
+          make server
+          make extenders
       
-    steps:  
-    - name: Download all artifacts  
-      uses: actions/download-artifact@v4  
-        
-    - name: Create release packages  
-      run: |  
-        tar -czf adaptix-server-linux.tar.gz -C server-linux .  
-        zip -r adaptix-client-windows.zip client-windows/  
-        tar -czf adaptix-client-linux.tar.gz -C client-linux .  
-          
-    - name: Upload release assets  
-      uses: softprops/action-gh-release@v1  
-      with:  
-        files: |  
-          adaptix-server-linux.tar.gz  
-          adaptix-client-windows.zip  
-          adaptix-client-linux.tar.gz  
-      env:  
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload Server Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-server-linux
+          path: |
+            dist/adaptixserver
+            dist/extenders/
+          retention-days: 30
+
+  # 构建 Windows 客户端
+  build-client-windows:
+    runs-on: ubuntu-24.04
+    needs: build-server
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            cmake \
+            ninja-build \
+            build-essential \
+            g++-mingw-w64-x86-64 \
+            mingw-w64-x86-64-dev \
+            libssl-dev \
+            qt6-base-dev \
+            qt6-websockets-dev \
+            qt6-declarative-dev
+      
+      - name: Install Qt6 for MinGW
+        run: |
+          wget https://download.qt.io/official_releases/qt/6.5/6.5.3/qt-opensource-linux-x64-6.5.3.run
+          chmod +x qt-opensource-linux-x64-6.5.3.run
+          ./qt-opensource-linux-x64-6.5.3.run --silent --accept-licenses
+      
+      - name: Build Windows Client
+        env:
+          CMAKE_TOOLCHAIN_FILE: cmake/mingw-toolchain.cmake
+          QT_ROOT: /opt/Qt/6.5.3/mingw_64
+        run: |
+          cd client
+          mkdir build && cd build
+          cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_SYSTEM_NAME=Windows
+          cmake --build . --config Release -j$(nproc)
+      
+      - name: Upload Client Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-windows
+          path: client/build/AdaptixClient.exe
+          retention-days: 30
