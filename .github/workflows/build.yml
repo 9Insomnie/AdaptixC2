@@ -9,7 +9,6 @@ on:
     types: [ published ]  
   
 jobs:  
-  # Linux服务端构建  
   build-server:  
     runs-on: ubuntu-latest  
     outputs:  
@@ -48,7 +47,7 @@ jobs:
       run: echo "hash=$(sha256sum dist/adaptixserver | cut -d' ' -f1)" >> $GITHUB_OUTPUT  
         
     - name: Upload server artifacts  
-      uses: actions/upload-artifact@v3  
+      uses: actions/upload-artifact@v4  
       with:  
         name: server-linux  
         path: |  
@@ -59,7 +58,6 @@ jobs:
           dist/extenders/  
         retention-days: 30  
   
-  # Windows客户端构建  
   build-client-windows:  
     runs-on: windows-latest  
     needs: build-server  
@@ -99,13 +97,12 @@ jobs:
         mingw32-make  
           
     - name: Upload client artifacts  
-      uses: actions/upload-artifact@v3  
+      uses: actions/upload-artifact@v4  
       with:  
         name: client-windows  
         path: AdaptixClient/AdaptixClient.exe  
         retention-days: 30  
   
-  # Linux客户端构建（可选）  
   build-client-linux:  
     runs-on: ubuntu-latest  
     needs: build-server  
@@ -139,13 +136,12 @@ jobs:
         make -j$(nproc)  
           
     - name: Upload client artifacts  
-      uses: actions/upload-artifact@v3  
+      uses: actions/upload-artifact@v4  
       with:  
         name: client-linux  
         path: AdaptixClient/AdaptixClient  
         retention-days: 30  
   
-  # 发布构建  
   release:  
     if: github.event_name == 'release'  
     runs-on: ubuntu-latest  
@@ -153,15 +149,12 @@ jobs:
       
     steps:  
     - name: Download all artifacts  
-      uses: actions/download-artifact@v3  
+      uses: actions/download-artifact@v4  
         
     - name: Create release packages  
       run: |  
-        # 服务端包  
         tar -czf adaptix-server-linux.tar.gz -C server-linux .  
-        # Windows客户端包  
         zip -r adaptix-client-windows.zip client-windows/  
-        # Linux客户端包  
         tar -czf adaptix-client-linux.tar.gz -C client-linux .  
           
     - name: Upload release assets  
