@@ -1,0 +1,175 @@
+name: Build AdaptixC2  
+  
+on:  
+  push:  
+    branches: [ main, dev ]  
+  pull_request:  
+    branches: [ main, dev ]  
+  release:  
+    types: [ published ]  
+  
+jobs:  
+  # Linux服务端构建  
+  build-server:  
+    runs-on: ubuntu-latest  
+    outputs:  
+      server-hash: ${{ steps.hash.outputs.hash }}  
+      
+    steps:  
+    - name: Checkout code  
+      uses: actions/checkout@v4  
+        
+    - name: Setup Go  
+      uses: actions/setup-go@v4  
+      with:  
+        go-version: '1.24.4'  
+          
+    - name: Cache Go modules  
+      uses: actions/cache@v3  
+      with:  
+        path: |  
+          ~/.cache/go-build  
+          ~/go/pkg/mod  
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}  
+          
+    - name: Install dependencies  
+      run: |  
+        sudo apt update  
+        sudo apt install -y build-essential mingw-w64  
+          
+    - name: Build server  
+      run: make server  
+        
+    - name: Build extenders  
+      run: make extenders  
+        
+    - name: Generate hash  
+      id: hash  
+      run: echo "hash=$(sha256sum dist/adaptixserver | cut -d' ' -f1)" >> $GITHUB_OUTPUT  
+        
+    - name: Upload server artifacts  
+      uses: actions/upload-artifact@v3  
+      with:  
+        name: server-linux  
+        path: |  
+          dist/adaptixserver  
+          dist/profile.json  
+          dist/ssl_gen.sh  
+          dist/404page.html  
+          dist/extenders/  
+        retention-days: 30  
+  
+  # Windows客户端构建  
+  build-client-windows:  
+    runs-on: windows-latest  
+    needs: build-server  
+      
+    steps:  
+    - name: Checkout code  
+      uses: actions/checkout@v4  
+        
+    - name: Setup Qt  
+      uses: jurplel/install-qt-action@v3  
+      with:  
+        version: '6.6.0'  
+        host: 'windows'  
+        target: 'desktop'  
+        arch: 'win64_mingw'  
+          
+    - name: Setup CMake  
+      uses: jwlawson/actions-setup-cmake@v1.14  
+      with:  
+        cmake-version: '3.28.0'  
+          
+    - name: Setup MinGW  
+      uses: egor-tensin/setup-mingw@v2  
+      with:  
+        platform: x64  
+          
+    - name: Cache CMake build  
+      uses: actions/cache@v3  
+      with:  
+        path: AdaptixClient/build  
+        key: ${{ runner.os }}-cmake-${{ hashFiles('AdaptixClient/CMakeLists.txt', 'AdaptixClient/**/CMakeLists.txt') }}  
+          
+    - name: Build client  
+      run: |  
+        cd AdaptixClient  
+        cmake . -G "MinGW Makefiles"  
+        mingw32-make  
+          
+    - name: Upload client artifacts  
+      uses: actions/upload-artifact@v3  
+      with:  
+        name: client-windows  
+        path: AdaptixClient/AdaptixClient.exe  
+        retention-days: 30  
+  
+  # Linux客户端构建（可选）  
+  build-client-linux:  
+    runs-on: ubuntu-latest  
+    needs: build-server  
+      
+    steps:  
+    - name: Checkout code  
+      uses: actions/checkout@v4  
+        
+    - name: Setup Qt  
+      uses: jurplel/install-qt-action@v3  
+      with:  
+        version: '6.6.0'  
+        host: 'linux'  
+        target: 'desktop'  
+        arch: 'gcc_64'  
+          
+    - name: Setup CMake  
+      uses: jwlawson/actions-setup-cmake@v1.14  
+      with:  
+        cmake-version: '3.28.0'  
+          
+    - name: Install dependencies  
+      run: |  
+        sudo apt update  
+        sudo apt install -y build-essential libssl-dev  
+          
+    - name: Build client  
+      run: |  
+        cd AdaptixClient  
+        cmake .  
+        make -j$(nproc)  
+          
+    - name: Upload client artifacts  
+      uses: actions/upload-artifact@v3  
+      with:  
+        name: client-linux  
+        path: AdaptixClient/AdaptixClient  
+        retention-days: 30  
+  
+  # 发布构建  
+  release:  
+    if: github.event_name == 'release'  
+    runs-on: ubuntu-latest  
+    needs: [build-server, build-client-windows, build-client-linux]  
+      
+    steps:  
+    - name: Download all artifacts  
+      uses: actions/download-artifact@v3  
+        
+    - name: Create release packages  
+      run: |  
+        # 服务端包  
+        tar -czf adaptix-server-linux.tar.gz -C server-linux .  
+        # Windows客户端包  
+        zip -r adaptix-client-windows.zip client-windows/  
+        # Linux客户端包  
+        tar -czf adaptix-client-linux.tar.gz -C client-linux .  
+          
+    - name: Upload release assets  
+      uses: softprops/action-gh-release@v1  
+      with:  
+        files: |  
+          adaptix-server-linux.tar.gz  
+          adaptix-client-windows.zip  
+          adaptix-client-linux.tar.gz  
+      env:  
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
