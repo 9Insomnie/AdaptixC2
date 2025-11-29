@@ -1,0 +1,168 @@
+name: 🪟 Build Windows 11 Client Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      qt_version:
+        description: 'Qt6 version'
+        required: false
+        default: '6.5.3'
+        type: string
+  push:
+    branches: [main, dev]
+    paths:
+      - 'client/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/build-client-windows.yml'
+
+jobs:
+  build-windows-client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    
+    env:
+      CC: x86_64-w64-mingw32-gcc
+      CXX: x86_64-w64-mingw32-g++
+      CMAKE_SYSTEM_NAME: Windows
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 🔧 Install MinGW Cross-Compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            mingw-w64 \
+            g++-mingw-w64-x86-64 \
+            gcc-mingw-w64-x86-64 \
+            binutils-mingw-w64-x86-64
+
+      - name: 📦 Install Qt6 for MinGW
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            qt6-base-dev \
+            qt6-websockets-dev \
+            qt6-declarative-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
+            libxcb1-dev
+
+      - name: 🔧 Create MinGW Toolchain File
+        run: |
+          cat > cmake/mingw-toolchain.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Windows)
+          set(CMAKE_SYSTEM_PROCESSOR x86_64)
+          
+          set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
+          set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+          set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+          
+          set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32 /usr/lib/x86_64-linux-gnu)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+          
+          set(QT_ROOT /usr/lib/x86_64-linux-gnu/cmake/Qt6)
+          EOF
+
+      - name: 📚 Install CMake & Ninja
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            ninja-build \
+            build-essential
+
+      - name: 🏗️ Configure Windows Client
+        run: |
+          cd client
+          mkdir -p build
+          cd build
+          
+          cmake .. \
+            -G "Ninja" \
+            -DCMAKE_TOOLCHAIN_FILE=../cmake/mingw-toolchain.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DQT_ROOT=/usr/lib/x86_64-linux-gnu/cmake/Qt6 \
+            -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu \
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+
+      - name: 🔨 Build Windows Client
+        run: |
+          cd client/build
+          cmake --build . --config Release -j$(nproc)
+          
+          # 验证文件生成
+          ls -lh AdaptixClient.exe || exit 1
+          file AdaptixClient.exe
+
+      - name: 📦 Prepare Windows Distribution
+        run: |
+          mkdir -p dist-windows
+          cp client/build/AdaptixClient.exe dist-windows/
+          
+          # 复制必要的 DLL (如果需要)
+          # cp /usr/x86_64-w64-mingw32/lib/*.dll dist-windows/ || true
+
+      - name: 🔍 Show Build Info
+        run: |
+          echo "=== Windows Client Info ==="
+          ls -lh dist-windows/AdaptixClient.exe
+          file dist-windows/AdaptixClient.exe
+          echo "=== Size ==="
+          du -h dist-windows/AdaptixClient.exe
+
+      - name: 📤 Upload Windows Client
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-windows11-amd64
+          path: dist-windows/
+          retention-days: 30
+          compression-level: 6
+
+      - name: 💾 Upload as Release Asset
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly-client
+          name: "Nightly Build - Windows 11 Client"
+          files: |
+            dist-windows/AdaptixClient.exe
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Windows 客户端的替代方案：使用 msys2
+  build-windows-client-msys2:
+    runs-on: windows-2022
+    if: false  # 禁用此任务，仅作为备用方案示例
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🐚 Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-qt6
+      
+      - name: 🏗️ Build with MSYS2
+        shell: msys2 {0}
+        run: |
+          cd client
+          mkdir build && cd build
+          cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+          mingw32-make -j$(nproc)
+      
+      - name: 📤 Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-client-windows-msys2
+          path: client/build/AdaptixClient.exe
