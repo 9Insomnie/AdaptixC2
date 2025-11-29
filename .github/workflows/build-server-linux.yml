@@ -1,0 +1,106 @@
+name: 🐧 Build Linux Server Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug mode'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'server/**'
+      - 'Makefile'
+      - 'go.mod'
+      - 'go.sum'
+
+jobs:
+  build-server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 🔧 Remove pre-installed Go
+        run: |
+          sudo rm -rf /usr/local/go /usr/bin/go /usr/local/bin/go
+          sudo apt remove -y golang-go 2>/dev/null || true
+
+      - name: 📦 Install Go 1.24.4
+        run: |
+          wget -q https://go.dev/dl/go1.24.4.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.24.4.linux-amd64.tar.gz
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
+          echo "GOPATH=/home/runner/go" >> $GITHUB_ENV
+          echo "GO111MODULE=on" >> $GITHUB_ENV
+
+      - name: ✅ Verify Go version
+        run: |
+          go version
+          go env
+
+      - name: 📚 Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            gcc \
+            g++ \
+            make \
+            pkg-config \
+            libssl-dev
+
+      - name: 🏗️ Build Server Binary
+        run: |
+          export PATH=$PATH:/usr/local/go/bin
+          echo "Building adaptixserver..."
+          make server
+          ls -lh dist/adaptixserver
+
+      - name: 🔌 Build Extenders (Plugins)
+        run: |
+          export PATH=$PATH:/usr/local/go/bin
+          echo "Building extenders..."
+          make extenders
+          ls -lh dist/extenders/
+
+      - name: 🔍 Debug mode (if enabled)
+        if: github.event.inputs.debug == 'true'
+        run: |
+          echo "=== Build Environment ==="
+          ldd dist/adaptixserver || true
+          file dist/adaptixserver
+          go version
+          echo "=== Binary Info ==="
+          ls -lh dist/
+
+      - name: 📤 Upload Server Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptix-server-linux-amd64
+          path: |
+            dist/adaptixserver
+            dist/extenders/
+          retention-days: 30
+          compression-level: 6
+
+      - name: 💾 Upload as Release Asset (optional)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly-server
+          name: "Nightly Build - Linux Server"
+          files: |
+            dist/adaptixserver
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
